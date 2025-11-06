@@ -5,19 +5,6 @@ Diffusion image generation training script using Hugging Face Diffusers + PyTorc
 2) Model: UNet denoising model using diffusers' UNet2DModel
 3) Loss: Mean-Square Error to recover the 'noise'
 
-To run, create a pip environment with mamba:
-  > mamba env create -f environment_python.yaml
-  > mamba activate diffusion-huggingface
-  > mamba install -y pytorch torchvision pytorch-cuda=11.8 -c pytorch -c nvidia
-
-When the environment is created, run the script as follow:
-  > # load the environment (if needed)
-  > mamba activate diffusion-huggingface
-  > # run the script
-  > python code_ddpm_cifar10.py
-  > # or (prefer method) run the script within ipython
-  > ipython
-  > run code_ddpm_cifar10.py
 
 """
 

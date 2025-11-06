@@ -9,9 +9,11 @@ Clone/download the repo:
 git clone https://github.com/smotsch/diffusion_hugging_face.git
 cd diffusion_hugging_face
 ```
+
+### Python environment
 If need it, create the python environment using `mamba` and `pip`:
 ```bash
-mamba env create -f environment_python.yaml
+mamba env create -f python_env/environment_python.yaml
 mamba activate diffusion-huggingface
 mamba install -y pytorch torchvision pytorch-cuda=11.8 -c pytorch -c nvidia
 ```
@@ -25,6 +27,19 @@ I prefer to use `ipython`, so an alternative method is:
 mamba activate diffusion-huggingface # load env if needed
 ipython
 run main_ddpm_cifar10.py
+```
+
+### Container
+An alternative method to run the script is to use a container. This method is particularly helpful when running on a server where mamba or conda might not be installed. We need `apptainer` to create the container from the file `ubuntu_diffusion_hugging.def`:
+```bash
+apptainer build ubuntu_diffusion_hugging.sif ubuntu_diffusion_hugging.def
+```
+Then, one can run the script within the container:
+```bash
+apptainer shell --nv ubuntu_diffusion_hugging.sif
+cd ...
+ipython
+...
 ```
 
 ## Running
