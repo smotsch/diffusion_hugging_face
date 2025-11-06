@@ -5,7 +5,6 @@ Diffusion image generation training script using Hugging Face Diffusers + PyTorc
 2) Model: UNet denoising model using diffusers' UNet2DModel
 3) Loss: Mean-Square Error to recover the 'noise'
 
-
 """
 
 import os, json
