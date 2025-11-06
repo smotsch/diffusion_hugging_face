@@ -1,0 +1,16 @@
+name: diffusion-huggingface
+channels:
+  - conda-forge
+  - pytorch
+  - nvidia
+dependencies:
+  - python=3.10
+  - ipython
+  - pip
+  - pip:
+      - diffusers>=0.30.0
+      - transformers
+      - datasets
+      - huggingface_hub
+      - tqdm
+ 
