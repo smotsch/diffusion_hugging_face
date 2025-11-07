@@ -26,7 +26,7 @@ cfg = {
     'output_dir': "results",
     'epochs': 10,
     'batch_size': 32,
-    'lr': 1e-4,
+    'lr': 5e-5,
     'image_size': 32,
     'nbr_timesteps': 1000
 }
@@ -39,11 +39,12 @@ os.makedirs(cfg['full_path'], exist_ok=True)
 #--------------------#
 #------ A) Data -----# 
 #--------------------#
+mean_cifar10 = (0.4914, 0.4822, 0.4465)
+#std_cifar10= (0.2470, 0.2435, 0.2616)
+std_cifar10= (.5,.5,.5)
 transform = transforms.Compose([
-    transforms.Resize(cfg['image_size']),
-    transforms.CenterCrop(cfg['image_size']),
     transforms.ToTensor(),
-    transforms.Normalize([0.5] * 3, [0.5] * 3),
+    transforms.Normalize(mean_cifar10, std_cifar10),
 ])
 dataset_cifar = datasets.CIFAR10(root="dataset", download=True, train=True, transform=transform)
 dataloader_cifar = DataLoader(dataset_cifar, batch_size=cfg['batch_size'], shuffle=True, num_workers=4, pin_memory=True)
@@ -56,18 +57,24 @@ myModel = UNet2DModel(
     sample_size=cfg['image_size'],
     in_channels=3,
     out_channels=3,
-    block_out_channels=(64, 128, 256, 512),
+    #block_out_channels=(128, 256, 512, 512),
+    block_out_channels=(32,32,64,128),
     layers_per_block=2,
-    attention_head_dim=64,
-).to(device)
+    #attention_head_dim=64,
+    norm_num_groups=32,
+    )
 # number of parameters:
 #  sum(p.numel() for p in myModel.parameters() if p.requires_grad)
+# Multiple GPU : not working on the server madmax :(
+#  myModel = nn.DataParallel(myModel, device_ids=[0, 1])  # use the GPU 0 and 1
+myModel = myModel.to(device)
 
 #---------------------#
 #------ C) Loss ------# 
 #---------------------#
 scheduler = DDPMScheduler(num_train_timesteps=cfg['nbr_timesteps'])
-optimizer = optim.AdamW(myModel.parameters(), lr=cfg['lr'], betas=(0.9, 0.999), weight_decay=1e-2)
+#optimizer = optim.AdamW(myModel.parameters(), lr=cfg['lr'], betas=(0.9, 0.999), weight_decay=1e-2)
+optimizer = optim.AdamW(myModel.parameters(), lr=cfg['lr'])
 
 
 #--------------------------------------------------#
@@ -76,6 +83,7 @@ optimizer = optim.AdamW(myModel.parameters(), lr=cfg['lr'], betas=(0.9, 0.999), 
 nbr_steps = len(dataloader_cifar) * cfg['epochs']
 progress_bar = tqdm(range(nbr_steps), desc="Training steps")
 epoch_losses = []
+start_time = datetime.now()
 
 for epoch in range(cfg['epochs']):
     total_loss = 0.0
@@ -103,10 +111,12 @@ for epoch in range(cfg['epochs']):
     epoch_losses.append({"epoch": epoch + 1, "loss": avg_loss})
     print(f"Epoch {epoch+1}: avg loss = {avg_loss:.6f}")
 
-print(f"Training finished. ")
+print(f"Training finished.")
 # save model, loss, configuration file (cfg)
 torch.save(myModel.state_dict(), os.path.join(cfg['full_path'],"final_model.pt") )
 pd.DataFrame(epoch_losses).to_csv(os.path.join(cfg['full_path'],"training_losses.csv"), index=False)
+elapsed = datetime.now() - start_time
+cfg['training time'] = str(elapsed).split('.')[0]
 with open(os.path.join(cfg['full_path'],"cfg.json"),'w') as jsonFile:
     json.dump(cfg, jsonFile, indent=4)
 
@@ -127,11 +137,16 @@ def generate_samples(num_samples, model, scheduler, device, cfg):
             t_tensor = torch.full((num_samples,), int(t), device=device, dtype=torch.long)
             noise_pred = model(Z, t_tensor).sample
             Z = scheduler.step(noise_pred, t, Z).prev_sample
+    # "denormalize" the images:
+    mean_cifar = torch.tensor([0.4914, 0.4822, 0.4465]).view(3, 1, 1).to(device)
+    #std_cifar = torch.tensor([0.2470, 0.2435, 0.2616]).view(3, 1, 1).to(device)
+    std_cifar = torch.tensor([.5,.5,.5]).view(3, 1, 1).to(device)
+    imgs = mean_cifar[None, ...] + Z*std_cifar[None, ...]
+    imgs = imgs.clamp(0, 1)
     # save the images
-    imgs = Z.clamp(-1, 1)
-    imgs = (imgs + 1) / 2.0
     grid = tv_utils.make_grid(imgs, nrow=int(math.sqrt(num_samples)))
     tv_utils.save_image(grid, os.path.join(cfg['full_path'],"samples.jpg"))
+    return imgs
 
 # If needed, load the model
 ## myModel = UNet2DModel(...)
@@ -141,5 +156,17 @@ def generate_samples(num_samples, model, scheduler, device, cfg):
 ##     cfg = json.load(f)
 ## scheduler = DDPMScheduler(num_train_timesteps=cfg['nbr_timesteps'])
 
-generate_samples(9, myModel, scheduler, device, cfg)
+imgs = generate_samples(9, myModel, scheduler, device, cfg)
+
+# use another method to plot
+pipeline = DDPMPipeline(unet=myModel, scheduler=scheduler)
+pipeline.to(device)
+samples = pipeline(batch_size=9, generator=torch.manual_seed(0)).images
+import matplotlib.pyplot as plt
+fig, axes = plt.subplots(3,3,figsize=(15,15))
+for i, img in enumerate(samples):
+    axes[i//3,i%3].imshow(img)
+    axes[i//3,i%3].axis('off')
+plt.tight_layout()
+plt.savefig(os.path.join(cfg['full_path'],"samples2.jpg"))
 
