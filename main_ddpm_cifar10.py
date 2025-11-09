@@ -19,7 +19,7 @@ from torch import nn, optim
 from torch.utils.data import DataLoader
 from torchvision import transforms, datasets, utils as tv_utils
 
-from diffusers import UNet2DModel, DDPMScheduler
+from diffusers import UNet2DModel, DDPMScheduler, DDPMPipeline
 
 # configuration file user
 cfg = {
