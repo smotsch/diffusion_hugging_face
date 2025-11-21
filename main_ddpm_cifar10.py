@@ -7,19 +7,15 @@ Diffusion image generation training script using Hugging Face Diffusers + PyTorc
 
 """
 
-import os, json
-import pandas as pd
-from tqdm.auto import tqdm
+import os,sys
 from datetime import datetime
-import math
 
 import torch
-import torch.nn.functional as F
-from torch import nn, optim
-from torch.utils.data import DataLoader
-from torchvision import transforms, datasets, utils as tv_utils
-
+from torchvision import transforms, datasets
 from diffusers import UNet2DModel, DDPMScheduler, DDPMPipeline
+
+sys.path.append(os.getcwd())
+from module_train_inference import train_DDPM, generate_samples
 
 # configuration file user
 cfg = {
@@ -28,7 +24,8 @@ cfg = {
     'batch_size': 32,
     'lr': 5e-5,
     'image_size': 32,
-    'nbr_timesteps': 1000
+    'nbr_timesteps': 1000,
+    'data_normalized': False,
 }
 # create folder for results
 now = datetime.now()
@@ -39,15 +36,18 @@ os.makedirs(cfg['full_path'], exist_ok=True)
 #--------------------#
 #------ A) Data -----# 
 #--------------------#
-mean_cifar10 = (0.4914, 0.4822, 0.4465)
-#std_cifar10= (0.2470, 0.2435, 0.2616)
-std_cifar10= (.5,.5,.5)
-transform = transforms.Compose([
-    transforms.ToTensor(),
-    transforms.Normalize(mean_cifar10, std_cifar10),
-])
+if (cfg['data_normalized']):
+    mean_cifar10 = (0.4914, 0.4822, 0.4465)
+    std_cifar10 = (0.2470, 0.2435, 0.2616)
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize(mean_cifar10, std_cifar10),
+    ])
+else:
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+    ])
 dataset_cifar = datasets.CIFAR10(root="dataset", download=True, train=True, transform=transform)
-dataloader_cifar = DataLoader(dataset_cifar, batch_size=cfg['batch_size'], shuffle=True, num_workers=4, pin_memory=True)
 
 #---------------------#
 #------ B) Model -----# 
@@ -69,97 +69,24 @@ myModel = UNet2DModel(
 #  myModel = nn.DataParallel(myModel, device_ids=[0, 1])  # use the GPU 0 and 1
 myModel = myModel.to(device)
 
-#---------------------#
 #------ C) Loss ------# 
 #---------------------#
-scheduler = DDPMScheduler(num_train_timesteps=cfg['nbr_timesteps'])
-#optimizer = optim.AdamW(myModel.parameters(), lr=cfg['lr'], betas=(0.9, 0.999), weight_decay=1e-2)
-optimizer = optim.AdamW(myModel.parameters(), lr=cfg['lr'])
-
+## MSE!
+#-- scheduler (t=0..1000)
+myScheduler = DDPMScheduler(num_train_timesteps=cfg['nbr_timesteps'])
 
 #--------------------------------------------------#
 #----------------    train !   --------------------#
 #--------------------------------------------------#
-nbr_steps = len(dataloader_cifar) * cfg['epochs']
-progress_bar = tqdm(range(nbr_steps), desc="Training steps")
-epoch_losses = []
-start_time = datetime.now()
+train_DDPM(myModel, dataset_cifar, myScheduler, device, cfg)
 
-for epoch in range(cfg['epochs']):
-    total_loss = 0.0
-    for imgs,_ in dataloader_cifar:
-        # create the noisy images
-        imgs = imgs.to(device)
-        batch_size_cur = imgs.shape[0]
-        timesteps = torch.randint(0, scheduler.config.num_train_timesteps, (batch_size_cur,), device=device, dtype=torch.long)
-        noise = torch.randn_like(imgs)
-        noisy_imgs = scheduler.add_noise(imgs, noise, timesteps)
-        # model predict noise
-        optimizer.zero_grad()
-        model_pred = myModel(noisy_imgs, timesteps).sample
-        # loss
-        loss = F.mse_loss(model_pred, noise)
-        loss.backward()
-        optimizer.step()
-        # done 
-        progress_bar.update(1)
-        progress_bar.set_postfix({"loss": float(loss.detach().cpu())})
-        total_loss += loss.item()
 
-    # one epoch done
-    avg_loss = total_loss / len(dataloader_cifar)
-    epoch_losses.append({"epoch": epoch + 1, "loss": avg_loss})
-    print(f"Epoch {epoch+1}: avg loss = {avg_loss:.6f}")
-
-print(f"Training finished.")
-# save model, loss, configuration file (cfg)
-torch.save(myModel.state_dict(), os.path.join(cfg['full_path'],"final_model.pt") )
-pd.DataFrame(epoch_losses).to_csv(os.path.join(cfg['full_path'],"training_losses.csv"), index=False)
-elapsed = datetime.now() - start_time
-cfg['training time'] = str(elapsed).split('.')[0]
-with open(os.path.join(cfg['full_path'],"cfg.json"),'w') as jsonFile:
-    json.dump(cfg, jsonFile, indent=4)
-
-# to debug:
-#  imgs,_ = next(iter(dataloader_cifar))
-
-#--------------------------------------------------#
 #-------------------   Testing   ------------------#
 #--------------------------------------------------#
-@torch.no_grad()
-def generate_samples(num_samples, model, scheduler, device, cfg):
-    torch.manual_seed(42)
-    model.eval()
-    # generate the new samples starting from a normal
-    Z = torch.randn(num_samples, model.config.in_channels, cfg['image_size'], cfg['image_size'], device=device)
-    with torch.no_grad():
-        for t in tqdm(range(cfg['nbr_timesteps']), desc="Sampling"):
-            t_tensor = torch.full((num_samples,), int(t), device=device, dtype=torch.long)
-            noise_pred = model(Z, t_tensor).sample
-            Z = scheduler.step(noise_pred, t, Z).prev_sample
-    # "denormalize" the images:
-    mean_cifar = torch.tensor([0.4914, 0.4822, 0.4465]).view(3, 1, 1).to(device)
-    #std_cifar = torch.tensor([0.2470, 0.2435, 0.2616]).view(3, 1, 1).to(device)
-    std_cifar = torch.tensor([.5,.5,.5]).view(3, 1, 1).to(device)
-    imgs = mean_cifar[None, ...] + Z*std_cifar[None, ...]
-    imgs = imgs.clamp(0, 1)
-    # save the images
-    grid = tv_utils.make_grid(imgs, nrow=int(math.sqrt(num_samples)))
-    tv_utils.save_image(grid, os.path.join(cfg['full_path'],"samples.jpg"))
-    return imgs
+imgs = generate_samples(9, myModel, myScheduler, device, cfg)
 
-# If needed, load the model
-## myModel = UNet2DModel(...)
-## myModel.load_state_dict(torch.load("results/.../final_model.pt", map_location=torch.device("cuda")))
-## myModel.eval()
-## with open("results/.../cfg.json", "r") as f:
-##     cfg = json.load(f)
-## scheduler = DDPMScheduler(num_train_timesteps=cfg['nbr_timesteps'])
-
-imgs = generate_samples(9, myModel, scheduler, device, cfg)
-
-# use another method to plot
-pipeline = DDPMPipeline(unet=myModel, scheduler=scheduler)
+# use another method to plot (no "de-normalization")
+pipeline = DDPMPipeline(unet=myModel, scheduler=myScheduler)
 pipeline.to(device)
 samples = pipeline(batch_size=9, generator=torch.manual_seed(0)).images
 import matplotlib.pyplot as plt
@@ -169,4 +96,5 @@ for i, img in enumerate(samples):
     axes[i//3,i%3].axis('off')
 plt.tight_layout()
 plt.savefig(os.path.join(cfg['full_path'],"samples2.jpg"))
+
 
