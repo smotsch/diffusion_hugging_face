@@ -73,11 +73,13 @@ def generate_samples(num_samples, model, myScheduler, device, cfg):
     std_cifar10 = (0.2470, 0.2435, 0.2616)
     # generate the new samples starting from a normal
     Z = torch.randn(num_samples, model.config.in_channels, cfg['image_size'], cfg['image_size'], device=device)
+    myScheduler.set_timesteps(cfg['nbr_timesteps'])
+
     with torch.no_grad():
-        for t in tqdm(range(cfg['nbr_timesteps'],0,-1), desc="Sampling"):
+        for t in tqdm(myScheduler.timesteps, desc="Sampling"):
             t_tensor = torch.full((num_samples,), int(t), device=device, dtype=torch.long)
             noise_pred = model(Z, t_tensor).sample
-            Z = myScheduler.step(noise_pred, t-1, Z).prev_sample
+            Z = myScheduler.step(noise_pred, t, Z).prev_sample
     # "denormalize" the images:
     if (cfg['data_normalized']):
         mean_cifar10_tensor = torch.tensor(mean_cifar10).view(3, 1, 1).to(device)
