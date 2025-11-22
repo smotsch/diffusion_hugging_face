@@ -1,0 +1,11 @@
+{
+    "output_dir": "results",
+    "epochs": 10,
+    "batch_size": 32,
+    "lr": 5e-05,
+    "image_size": 32,
+    "nbr_timesteps": 1000,
+    "data_normalized": false,
+    "full_path": "results/diffusion_2025-11-21_15h32m36_data_NOT_normalized",
+    "training time": "0:16:11"
+}

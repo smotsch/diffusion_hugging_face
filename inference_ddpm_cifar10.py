@@ -14,7 +14,7 @@ from module_train_inference import generate_samples
 
 
 ## folder results
-folder_result = "results/diffusion_2025-11-21_15h10m48_normalized_data"
+folder_result = "results/diffusion_2025-11-21_15h32m36_data_NOT_normalized"
 #folder_result = "results/diffusion_2025-11-21_15h32m36"
 
 
